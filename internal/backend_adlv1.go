@@ -82,7 +82,7 @@ func adlLogResp(level logrus.Level, r *http.Response) {
 		op := r.Request.URL.Query().Get("op")
 		requestId := r.Request.Header.Get(ADL1_REQUEST_ID)
 		respId := r.Header.Get(ADL1_REQUEST_ID)
-		adls1Log.Logf(level, "%v %v %v %v %v", op, r.Request.URL.String(),
+		adls1Log.Logger.Logf(level, "%v %v %v %v %v", op, r.Request.URL.String(),
 			requestId, r.Status, respId)
 	}
 }

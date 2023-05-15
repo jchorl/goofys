@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/aws/smithy-go/logging"
 	"github.com/sirupsen/logrus"
 	logrus_syslog "github.com/sirupsen/logrus/hooks/syslog"
 )
@@ -97,8 +98,18 @@ func (l *LogHandle) Format(e *logrus.Entry) ([]byte, error) {
 }
 
 // for aws.Logger
-func (l *LogHandle) Log(args ...interface{}) {
-	l.Debugln(args...)
+var _ logging.Logger = (*LogHandle)(nil)
+
+func (l *LogHandle) Logf(classification logging.Classification, format string, v ...interface{}) {
+	switch classification {
+	case logging.Warn:
+		l.Warnf(format, v...)
+	case logging.Debug:
+		l.Debugf(format, v...)
+	default:
+		l.Warnf("unknown logging classification: %s", classification)
+		l.Debugf(format, v...)
+	}
 }
 
 func NewLogger(name string) *LogHandle {

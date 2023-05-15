@@ -83,7 +83,7 @@ var VersionHash string
 func NewApp() (app *cli.App) {
 	uid, gid := MyUserAndGroup()
 
-	s3Default := (&S3Config{}).Init()
+	s3Default := &S3Config{}
 
 	app = &cli.App{
 		Name:     "goofys",
@@ -152,7 +152,7 @@ func NewApp() (app *cli.App) {
 
 			cli.StringFlag{
 				Name:  "region",
-				Value: s3Default.Region,
+				Value: "us-east-1",
 				Usage: "The region to connect to. Usually this is auto-detected." +
 					" Possible values: us-east-1, us-west-1, us-west-2, eu-west-1, " +
 					"eu-central-1, ap-southeast-1, ap-southeast-2, ap-northeast-1, " +
@@ -350,15 +350,12 @@ func PopulateFlags(c *cli.Context) (ret *FlagStorage) {
 		c.IsSet("sse-c") || c.IsSet("acl") || c.IsSet("subdomain") {
 
 		if flags.Backend == nil {
-			flags.Backend = (&S3Config{}).Init()
+			flags.Backend = &S3Config{}
 		}
 		config, _ := flags.Backend.(*S3Config)
 
-		config.Region = c.String("region")
-		config.RegionSet = c.IsSet("region")
 		config.RequesterPays = c.Bool("requester-pays")
 		config.StorageClass = c.String("storage-class")
-		config.Profile = c.String("profile")
 		config.UseSSE = c.Bool("sse")
 		config.UseKMS = c.IsSet("sse-kms")
 		config.KMSKeyID = c.String("sse-kms")

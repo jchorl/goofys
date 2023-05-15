@@ -15,6 +15,9 @@
 package internal
 
 import (
+	"errors"
+	"reflect"
+
 	. "github.com/kahing/goofys/api/common"
 
 	"context"
@@ -28,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
@@ -100,7 +103,7 @@ var fuseLog = GetLogger("fuse")
 
 func NewBackend(bucket string, flags *FlagStorage) (cloud StorageBackend, err error) {
 	if flags.Backend == nil {
-		flags.Backend = (&S3Config{}).Init()
+		flags.Backend = &S3Config{}
 	}
 
 	if config, ok := flags.Backend.(*AZBlobConfig); ok {
@@ -111,9 +114,10 @@ func NewBackend(bucket string, flags *FlagStorage) (cloud StorageBackend, err er
 		cloud, err = NewADLv2(bucket, flags, config)
 	} else if config, ok := flags.Backend.(*S3Config); ok {
 		if strings.HasSuffix(flags.Endpoint, "/storage.googleapis.com") {
-			cloud, err = NewGCS3(bucket, flags, config)
+			// cloud, err = NewGCS3(bucket, flags, config)
+			err = fmt.Errorf("GCS3 support removed")
 		} else {
-			cloud, err = NewS3(bucket, flags, config)
+			cloud, err = NewS3(context.Background(), bucket, flags, config)
 		}
 	} else if config, ok := flags.Backend.(*GCSConfig); ok {
 		cloud, err = NewGCS(bucket, config)
@@ -200,7 +204,7 @@ func newGoofys(ctx context.Context, bucket string, flags *FlagStorage,
 		log.Errorf("Unable to setup backend: %v", err)
 		return nil
 	}
-	_, fs.gcsS3 = cloud.Delegate().(*GCS3)
+	// _, fs.gcsS3 = cloud.Delegate().(*GCS3)
 
 	randomObjectName := prefix + (RandStringBytesMaskImprSrc(32))
 	err = cloud.Init(randomObjectName)
@@ -542,36 +546,28 @@ func mapAwsError(err error) error {
 		return nil
 	}
 
-	if awsErr, ok := err.(awserr.Error); ok {
-		switch awsErr.Code() {
-		case "BucketRegionError":
-			// don't need to log anything, we should detect region after
-			return err
-		case "NoSuchBucket":
-			return syscall.ENXIO
-		case "BucketAlreadyOwnedByYou":
-			return fuse.EEXIST
-		}
+	var httpResponseErr *awshttp.ResponseError
+	if errors.As(err, &httpResponseErr) {
+		s3Log.Infof("caught aws error: %s", err)
+		return mapHttpError(httpResponseErr.HTTPStatusCode())
+	}
 
-		if reqErr, ok := err.(awserr.RequestFailure); ok {
-			// A service error occurred
-			err = mapHttpError(reqErr.StatusCode())
-			if err != nil {
-				return err
-			} else {
-				s3Log.Errorf("http=%v %v s3=%v request=%v\n",
-					reqErr.StatusCode(), reqErr.Message(),
-					awsErr.Code(), reqErr.RequestID())
-				return reqErr
-			}
-		} else {
-			// Generic AWS Error with Code, Message, and original error (if any)
-			s3Log.Errorf("code=%v msg=%v, err=%v\n", awsErr.Code(), awsErr.Message(), awsErr.OrigErr())
-			return awsErr
-		}
-	} else {
+	var errno syscall.Errno
+	if errors.As(err, &errno) {
+		s3Log.Infof("caught errno: %s", err)
 		return err
 	}
+
+	unwrap := err
+	for unwrap != nil {
+		s3Log.Errorf("got error (type: %s): %+v", reflect.TypeOf(unwrap), unwrap)
+		unwrap = errors.Unwrap(err)
+	}
+
+	// didn't catch the error, no good
+	s3Log.Fatalf("mapping error: %+v", err)
+
+	return err
 }
 
 func (fs *Goofys) allocateInodeId() (id fuseops.InodeID) {

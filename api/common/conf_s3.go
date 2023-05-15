@@ -15,30 +15,19 @@
 package common
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/client"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
-	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/sirupsen/logrus"
 )
 
 type S3Config struct {
-	Profile         string
-	AccessKey       string
-	SecretKey       string
-	RoleArn         string
-	RoleExternalId  string
-	RoleSessionName string
-	StsEndpoint     string
-
 	RequesterPays bool
-	Region        string
-	RegionSet     bool
 
 	StorageClass string
 
@@ -51,79 +40,46 @@ type S3Config struct {
 
 	Subdomain bool
 
-	Credentials *credentials.Credentials
-	Session     *session.Session
-
 	BucketOwner string
 }
 
-var s3Session *session.Session
-
-func (c *S3Config) Init() *S3Config {
-	if c.Region == "" {
-		c.Region = "us-east-1"
+func (c *S3Config) ToAwsConfig(ctx context.Context, flags *FlagStorage) (aws.Config, error) {
+	opts := []func(*config.LoadOptions) error{
+		config.WithHTTPClient(&http.Client{
+			Transport: GetHTTPTransport(),
+			Timeout:   flags.HTTPTimeout,
+		}),
 	}
-	if c.StorageClass == "" {
-		c.StorageClass = "STANDARD"
-	}
-	return c
-}
 
-func (c *S3Config) ToAwsConfig(flags *FlagStorage) (*aws.Config, error) {
-	awsConfig := (&aws.Config{
-		Region: &c.Region,
-		Logger: GetLogger("s3"),
-	}).WithHTTPClient(&http.Client{
-		Transport: &defaultHTTPTransport,
-		Timeout:   flags.HTTPTimeout,
-	})
+	logger := GetLogger("s3")
 	if flags.DebugS3 {
-		awsConfig.LogLevel = aws.LogLevel(aws.LogDebug | aws.LogDebugWithRequestErrors)
-	}
+		lvl := logrus.DebugLevel
+		logger.Lvl = &lvl
+		opts = append(opts, config.WithClientLogMode(aws.LogSigning|aws.LogRetries|aws.LogRequest|aws.LogRequestWithBody|aws.LogResponse|aws.LogResponseWithBody|aws.LogDeprecatedUsage|aws.LogRequestEventMessage|aws.LogResponseEventMessage))
 
-	if c.Credentials == nil {
-		if c.AccessKey != "" {
-			c.Credentials = credentials.NewStaticCredentials(c.AccessKey, c.SecretKey, "")
-		}
 	}
+	opts = append(opts, config.WithLogger(logger))
+
 	if flags.Endpoint != "" {
-		awsConfig.Endpoint = &flags.Endpoint
+		opts = append(opts, config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: flags.Endpoint}, nil
+			})),
+		)
 	}
 
-	awsConfig.S3ForcePathStyle = aws.Bool(!c.Subdomain)
-
-	if c.Session == nil {
-		if s3Session == nil {
-			var err error
-			s3Session, err = session.NewSessionWithOptions(session.Options{
-				Profile:           c.Profile,
-				SharedConfigState: session.SharedConfigEnable,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-		c.Session = s3Session
-	}
-
-	if c.RoleArn != "" {
-		c.Credentials = stscreds.NewCredentials(stsConfigProvider{c}, c.RoleArn,
-			func(p *stscreds.AssumeRoleProvider) {
-				if c.RoleExternalId != "" {
-					p.ExternalID = &c.RoleExternalId
-				}
-				p.RoleSessionName = c.RoleSessionName
-			})
-	}
-
-	if c.Credentials != nil {
-		awsConfig.Credentials = c.Credentials
+	cfg, err := config.LoadDefaultConfig(
+		ctx,
+		opts...,
+	)
+	if err != nil {
+		return aws.Config{}, err
 	}
 
 	if c.SseC != "" {
 		key, err := base64.StdEncoding.DecodeString(c.SseC)
 		if err != nil {
-			return nil, fmt.Errorf("sse-c is not base64-encoded: %v", err)
+			return aws.Config{}, fmt.Errorf("sse-c is not base64-encoded: %v", err)
 		}
 
 		c.SseC = string(key)
@@ -131,21 +87,5 @@ func (c *S3Config) ToAwsConfig(flags *FlagStorage) (*aws.Config, error) {
 		c.SseCDigest = base64.StdEncoding.EncodeToString(m[:])
 	}
 
-	return awsConfig, nil
-}
-
-type stsConfigProvider struct {
-	*S3Config
-}
-
-func (c stsConfigProvider) ClientConfig(serviceName string, cfgs ...*aws.Config) client.Config {
-	config := c.Session.ClientConfig(serviceName, cfgs...)
-	if c.Credentials != nil {
-		config.Config.Credentials = c.Credentials
-	}
-	if c.StsEndpoint != "" {
-		config.Endpoint = c.StsEndpoint
-	}
-
-	return config
+	return cfg, nil
 }

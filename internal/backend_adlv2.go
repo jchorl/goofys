@@ -76,7 +76,7 @@ func adl2LogResp(level logrus.Level, r *http.Response) {
 		// don't log anything if this is being called twice,
 		// which it is via ResponseInspector
 		if respId != "" {
-			adl2Log.Logf(level, "%v %v %v %v %v", r.Request.Method,
+			adl2Log.Logger.Logf(level, "%v %v %v %v %v", r.Request.Method,
 				r.Request.URL.String(),
 				requestId, r.Status, respId)
 			r.Header.Del(ADL2_REQUEST_ID)
