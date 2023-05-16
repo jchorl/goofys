@@ -1,4 +1,4 @@
-package goofys
+package api
 
 import (
 	. "github.com/kahing/goofys/api/common"
