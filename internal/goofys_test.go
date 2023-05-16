@@ -41,8 +41,6 @@ import (
 	"context"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/corehandlers"
-	"github.com/aws/aws-sdk-go/aws/credentials"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/Azure/go-autorest/autorest"
@@ -166,11 +164,11 @@ func (t *GoofysTest) deleteBlobsParallelly(cloud StorageBackend, blobs []string)
 // groupByDecresingDepths takes a slice of path strings and returns the paths as
 // groups where each group has the same `depth` - depth(a/b/c)=2, depth(a/b/)=1
 // The groups are returned in decreasing order of depths.
-// - Inp: [] Out: []
-// - Inp: ["a/b1/", "a/b/c1", "a/b2", "a/b/c2"]
-//   Out: [["a/b/c1", "a/b/c2"], ["a/b1/", "a/b2"]]
-// - Inp: ["a/b1/", "z/a/b/c1", "a/b2", "z/a/b/c2"]
-//   Out:	[["z/a/b/c1", "z/a/b/c2"], ["a/b1/", "a/b2"]
+//   - Inp: [] Out: []
+//   - Inp: ["a/b1/", "a/b/c1", "a/b2", "a/b/c2"]
+//     Out: [["a/b/c1", "a/b/c2"], ["a/b1/", "a/b2"]]
+//   - Inp: ["a/b1/", "z/a/b/c1", "a/b2", "z/a/b/c2"]
+//     Out:	[["z/a/b/c1", "z/a/b/c2"], ["a/b1/", "a/b2"]
 func groupByDecresingDepths(items []string) [][]string {
 	depthToGroup := map[int][]string{}
 	for _, item := range items {
@@ -210,43 +208,17 @@ func (t *GoofysTest) DeleteADLBlobs(cloud StorageBackend, items []string) error 
 }
 
 func (s *GoofysTest) selectTestConfig(t *C, flags *FlagStorage) (conf S3Config) {
-	(&conf).Init()
-
 	if hasEnv("AWS") {
-		if isTravis() {
-			conf.Region = "us-east-1"
-		} else {
-			conf.Region = "us-west-2"
-		}
-		profile := os.Getenv("AWS")
-		if profile != "" {
-			if profile != "-" {
-				conf.Profile = profile
-			} else {
-				conf.AccessKey = os.Getenv("AWS_ACCESS_KEY_ID")
-				conf.SecretKey = os.Getenv("AWS_SECRET_ACCESS_KEY")
-			}
-		}
-
 		conf.BucketOwner = os.Getenv("BUCKET_OWNER")
 		if conf.BucketOwner == "" {
 			panic("BUCKET_OWNER is required on AWS")
 		}
 	} else if hasEnv("GCS") {
-		conf.Region = "us-west1"
-		conf.Profile = os.Getenv("GCS")
 		flags.Endpoint = "http://storage.googleapis.com"
 	} else if hasEnv("MINIO") {
-		conf.Region = "us-east-1"
-		conf.AccessKey = "Q3AM3UQ867SPQQA43P2F"
-		conf.SecretKey = "zuf+tfteSlswRu7BJ86wekitnifILbZam1KYY3TG"
 		flags.Endpoint = "https://play.minio.io:9000"
 	} else {
 		s.emulator = true
-
-		conf.Region = "us-west-2"
-		conf.AccessKey = "foo"
-		conf.SecretKey = "bar"
 		flags.Endpoint = "http://127.0.0.1:8080"
 	}
 
@@ -491,7 +463,7 @@ func (s *GoofysTest) SetUpTest(t *C) {
 		conf := s.selectTestConfig(t, flags)
 		flags.Backend = &conf
 
-		s3, err := NewS3(bucket, flags, &conf)
+		s3, err := NewS3(context.TODO(), bucket, flags, &conf)
 		t.Assert(err, IsNil)
 
 		s.cloud = s3
@@ -500,22 +472,18 @@ func (s *GoofysTest) SetUpTest(t *C) {
 			s.cloud = NewS3BucketEventualConsistency(s3)
 		}
 
-		if s.emulator {
-			s3.Handlers.Sign.Clear()
-			s3.Handlers.Sign.PushBack(SignV2)
-			s3.Handlers.Sign.PushBackNamed(corehandlers.BuildContentLengthHandler)
-		}
-		_, err = s3.ListBuckets(nil)
+		_, err = s3.S3.ListBuckets(context.TODO(), nil)
 		t.Assert(err, IsNil)
 
 	} else if cloud == "gcs3" {
-		conf := s.selectTestConfig(t, flags)
-		flags.Backend = &conf
+		t.Fatal("gcs3 no longer supported")
+		// conf := s.selectTestConfig(t, flags)
+		// flags.Backend = &conf
 
-		var err error
-		s.cloud, err = NewGCS3(bucket, flags, &conf)
-		t.Assert(s.cloud, NotNil)
-		t.Assert(err, IsNil)
+		// var err error
+		// s.cloud, err = NewGCS3(bucket, flags, &conf)
+		// t.Assert(s.cloud, NotNil)
+		// t.Assert(err, IsNil)
 	} else if cloud == "azblob" {
 		config, err := AzureBlobConfig(os.Getenv("ENDPOINT"), "", "blob")
 		t.Assert(err, IsNil)
@@ -625,7 +593,7 @@ func (s *GoofysTest) SetUpTest(t *C) {
 		t.Assert(err, IsNil)
 		t.Assert(s.cloud, NotNil)
 	} else {
-		t.Fatal("Unsupported backend")
+		t.Fatalf("Unsupported backend: %v", cloud)
 	}
 
 	if mount == "false" {
@@ -1329,7 +1297,7 @@ func (s *GoofysTest) TestBackendListPagination(t *C) {
 
 	var itemsPerPage int
 	switch s.cloud.Delegate().(type) {
-	case *S3Backend, *GCS3:
+	case *S3Backend:
 		itemsPerPage = 1000
 	case *AZBlob, *ADLv2:
 		itemsPerPage = 5000
@@ -1589,7 +1557,7 @@ func (s *GoofysTest) TestRename(t *C) {
 		if !hasEnv("GCS") {
 			// not really rename but can be used by rename
 			from, to = s.fs.bucket+"/file2", "new_file"
-			_, err = s3.copyObjectMultipart(int64(len("file2")), from, to, "", nil, nil, nil)
+			_, err = s3.copyObjectMultipart(int64(len("file2")), from, to, "", nil, nil, "")
 			t.Assert(err, IsNil)
 		}
 	}
@@ -2057,7 +2025,6 @@ func (s *GoofysTest) anonymous(t *C) {
 	s3, ok = cloud.Delegate().(*S3Backend)
 	t.Assert(ok, Equals, true)
 
-	s3.awsConfig.Credentials = credentials.AnonymousCredentials
 	s3.newS3()
 }
 
@@ -2968,7 +2935,6 @@ func (s *GoofysTest) TestRead403(t *C) {
 	fh, err := in.OpenFile(fuseops.OpContext{uint32(os.Getpid())})
 	t.Assert(err, IsNil)
 
-	s3.awsConfig.Credentials = credentials.AnonymousCredentials
 	s3.newS3()
 
 	// fake enable read-ahead
@@ -3360,26 +3326,16 @@ func (s *GoofysTest) newBackend(t *C, bucket string, createBucket bool) (cloud S
 	switch s.cloud.Delegate().(type) {
 	case *S3Backend:
 		config, _ := s.fs.flags.Backend.(*S3Config)
-		s3, err := NewS3(bucket, s.fs.flags, config)
+		s3, err := NewS3(context.TODO(), bucket, s.fs.flags, config)
 		t.Assert(err, IsNil)
 
 		s3.aws = hasEnv("AWS")
-
-		if s.emulator {
-			s3.Handlers.Sign.Clear()
-			s3.Handlers.Sign.PushBack(SignV2)
-			s3.Handlers.Sign.PushBackNamed(corehandlers.BuildContentLengthHandler)
-		}
 
 		if s3.aws {
 			cloud = NewS3BucketEventualConsistency(s3)
 		} else {
 			cloud = s3
 		}
-	case *GCS3:
-		config, _ := s.fs.flags.Backend.(*S3Config)
-		cloud, err = NewGCS3(bucket, s.fs.flags, config)
-		t.Assert(err, IsNil)
 	case *AZBlob:
 		config, _ := s.fs.flags.Backend.(*AZBlobConfig)
 		cloud, err = NewAZBlob(bucket, config)
@@ -3611,7 +3567,7 @@ func (s *GoofysTest) TestMountsError(t *C) {
 		config := *s3.config
 		flags.Endpoint = "0.0.0.0:0"
 		var err error
-		cloud, err = NewS3(bucket, &flags, &config)
+		cloud, err = NewS3(context.TODO(), bucket, &flags, &config)
 		t.Assert(err, IsNil)
 	} else if _, ok := s.cloud.(*ADLv1); ok {
 		config, _ := s.fs.flags.Backend.(*ADLv1Config)

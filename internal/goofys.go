@@ -32,6 +32,7 @@ import (
 	"time"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 
 	"github.com/jacobsa/fuse"
 	"github.com/jacobsa/fuse/fuseops"
@@ -544,6 +545,11 @@ func mapHttpError(status int) error {
 func mapAwsError(err error) error {
 	if err == nil {
 		return nil
+	}
+
+	var bnf manager.BucketNotFound
+	if errors.As(err, &bnf) {
+		return syscall.ENXIO
 	}
 
 	var httpResponseErr *awshttp.ResponseError

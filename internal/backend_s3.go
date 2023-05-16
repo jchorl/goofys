@@ -16,6 +16,7 @@ package internal
 
 import (
 	"context"
+	"reflect"
 
 	. "github.com/kahing/goofys/api/common"
 
@@ -77,9 +78,13 @@ func NewS3(ctx context.Context, bucket string, flags *FlagStorage, config *S3Con
 }
 
 func (s *S3Backend) Init(key string) error {
-	region, err := manager.GetBucketRegion(context.TODO(), s.S3, s.Bucket())
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	region, err := manager.GetBucketRegion(ctx, s.S3, s.Bucket())
 	if err != nil {
-		return err
+		s3Log.Warnf("initial call to get bucket region failed, something is likely wrong %s: %+v", reflect.TypeOf(err), err)
+		return mapAwsError(err)
 	}
 
 	if s.awsConfig.Region != region {
@@ -99,11 +104,12 @@ func (s *S3Backend) Capabilities() *Capabilities {
 }
 
 func (s *S3Backend) newS3() {
-	s.S3 = s3.NewFromConfig(s.awsConfig, func(o *s3.Options) {
-		// o.UsePathStyle = !s.config.Subdomain
-	})
-
-	// TODO make sure eveyr call has a request payer
+	s.S3 = s3.NewFromConfig(
+		s.awsConfig,
+		func(o *s3.Options) {
+			o.UsePathStyle = !s.config.Subdomain
+		},
+	)
 }
 
 func (s *S3Backend) ListObjectsV2(params *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, string, error) {
@@ -111,7 +117,10 @@ func (s *S3Backend) ListObjectsV2(params *s3.ListObjectsV2Input) (*s3.ListObject
 		params.RequestPayer = types.RequestPayerRequester
 	}
 
-	resp, err := s.S3.ListObjectsV2(context.TODO(), params)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.ListObjectsV2(ctx, params)
 	if err != nil {
 		return nil, "", err
 	}
@@ -174,7 +183,10 @@ func (s *S3Backend) HeadBlob(param *HeadBlobInput) (*HeadBlobOutput, error) {
 		head.RequestPayer = types.RequestPayerRequester
 	}
 
-	resp, err := s.S3.HeadObject(context.TODO(), &head)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.HeadObject(ctx, &head)
 	if err != nil {
 		s3Log.Infof("JOSH: head bucket=%s key=%s err: %+v", s.bucket, param.Key, err)
 		return nil, mapAwsError(err)
@@ -241,7 +253,10 @@ func (s *S3Backend) ListBlobs(param *ListBlobsInput) (*ListBlobsOutput, error) {
 }
 
 func (s *S3Backend) DeleteBlob(param *DeleteBlobInput) (*DeleteBlobOutput, error) {
-	resp, err := s.S3.DeleteObject(context.TODO(), &s3.DeleteObjectInput{
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: &s.bucket,
 		Key:    &param.Key,
 	})
@@ -257,11 +272,14 @@ func (s *S3Backend) DeleteBlobs(param *DeleteBlobsInput) (*DeleteBlobsOutput, er
 	var items types.Delete
 	items.Objects = make([]types.ObjectIdentifier, num_objs)
 
-	for i, _ := range param.Items {
+	for i := range param.Items {
 		items.Objects[i] = types.ObjectIdentifier{Key: &param.Items[i]}
 	}
 
-	resp, err := s.S3.DeleteObjects(context.TODO(), &s3.DeleteObjectsInput{
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 		Bucket: &s.bucket,
 		Delete: &items,
 	})
@@ -301,7 +319,10 @@ func (s *S3Backend) mpuCopyPart(from string, to string, mpuId string, bytes stri
 		params.CopySourceSSECustomerKeyMD5 = &s.config.SseCDigest
 	}
 
-	resp, err := s.S3.UploadPartCopy(context.TODO(), params)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.UploadPartCopy(ctx, params)
 	if err != nil {
 		s3Log.Errorf("UploadPartCopy %v = %v", params, err)
 		*errout = mapAwsError(err)
@@ -386,7 +407,10 @@ func (s *S3Backend) copyObjectMultipart(size int64, from string, to string, mpuI
 			params.ACL = types.ObjectCannedACL(s.config.ACL)
 		}
 
-		resp, err := s.S3.CreateMultipartUpload(context.TODO(), params)
+		ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+		defer cancel()
+
+		resp, err := s.S3.CreateMultipartUpload(ctx, params)
 		if err != nil {
 			return "", mapAwsError(err)
 		}
@@ -416,7 +440,10 @@ func (s *S3Backend) copyObjectMultipart(size int64, from string, to string, mpuI
 			},
 		}
 
-		resp, err := s.S3.CompleteMultipartUpload(context.TODO(), params)
+		ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+		defer cancel()
+
+		resp, err := s.S3.CompleteMultipartUpload(ctx, params)
 		if err != nil {
 			err = mapAwsError(err)
 		} else {
@@ -533,7 +560,10 @@ func (s *S3Backend) GetBlob(param *GetBlobInput) (*GetBlobOutput, error) {
 	}
 	// TODO handle IfMatch
 
-	resp, err := s.S3.GetObject(context.TODO(), &get)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.GetObject(ctx, &get)
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -586,7 +616,10 @@ func (s *S3Backend) PutBlob(param *PutBlobInput) (*PutBlobOutput, error) {
 		put.ACL = types.ObjectCannedACL(s.config.ACL)
 	}
 
-	resp, err := s.S3.PutObject(context.TODO(), put)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.PutObject(ctx, put)
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -623,7 +656,10 @@ func (s *S3Backend) MultipartBlobBegin(param *MultipartBlobBeginInput) (*Multipa
 		mpu.ACL = types.ObjectCannedACL(s.config.ACL)
 	}
 
-	resp, err := s.S3.CreateMultipartUpload(context.TODO(), &mpu)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.CreateMultipartUpload(ctx, &mpu)
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -654,7 +690,10 @@ func (s *S3Backend) MultipartBlobAdd(param *MultipartBlobAddInput) (*MultipartBl
 	}
 	s3Log.Debug(params)
 
-	resp, err := s.S3.UploadPart(context.TODO(), &params)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.UploadPart(ctx, &params)
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -685,7 +724,10 @@ func (s *S3Backend) MultipartBlobCommit(param *MultipartBlobCommitInput) (*Multi
 		},
 	}
 
-	resp, err := s.S3.CompleteMultipartUpload(context.TODO(), &mpu)
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.CompleteMultipartUpload(ctx, &mpu)
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -704,7 +746,11 @@ func (s *S3Backend) MultipartBlobAbort(param *MultipartBlobCommitInput) (*Multip
 		Key:      param.Key,
 		UploadId: param.UploadId,
 	}
-	resp, err := s.S3.AbortMultipartUpload(context.TODO(), &mpu)
+
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	resp, err := s.S3.AbortMultipartUpload(ctx, &mpu)
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -712,7 +758,10 @@ func (s *S3Backend) MultipartBlobAbort(param *MultipartBlobCommitInput) (*Multip
 }
 
 func (s *S3Backend) MultipartExpire(param *MultipartExpireInput) (*MultipartExpireOutput, error) {
-	mpu, err := s.S3.ListMultipartUploads(context.TODO(), &s3.ListMultipartUploadsInput{
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	mpu, err := s.S3.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
 		Bucket: &s.bucket,
 	})
 	if err != nil {
@@ -729,7 +778,11 @@ func (s *S3Backend) MultipartExpire(param *MultipartExpireInput) (*MultipartExpi
 				Key:      upload.Key,
 				UploadId: upload.UploadId,
 			}
-			_, err := s.S3.AbortMultipartUpload(context.TODO(), params)
+
+			ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+			defer cancel()
+
+			_, err := s.S3.AbortMultipartUpload(ctx, params)
 			if mapAwsError(err) == syscall.EACCES {
 				break
 			} else if err != nil {
@@ -744,7 +797,10 @@ func (s *S3Backend) MultipartExpire(param *MultipartExpireInput) (*MultipartExpi
 }
 
 func (s *S3Backend) RemoveBucket(param *RemoveBucketInput) (*RemoveBucketOutput, error) {
-	_, err := s.S3.DeleteBucket(context.TODO(), &s3.DeleteBucketInput{Bucket: &s.bucket})
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	_, err := s.S3.DeleteBucket(ctx, &s3.DeleteBucketInput{Bucket: &s.bucket})
 	if err != nil {
 		return nil, mapAwsError(err)
 	}
@@ -752,7 +808,10 @@ func (s *S3Backend) RemoveBucket(param *RemoveBucketInput) (*RemoveBucketOutput,
 }
 
 func (s *S3Backend) MakeBucket(param *MakeBucketInput) (*MakeBucketOutput, error) {
-	_, err := s.S3.CreateBucket(context.TODO(), &s3.CreateBucketInput{
+	ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+	defer cancel()
+
+	_, err := s.S3.CreateBucket(ctx, &s3.CreateBucketInput{
 		Bucket: &s.bucket,
 		ACL:    types.BucketCannedACL(s.config.ACL),
 	})
@@ -775,7 +834,10 @@ func (s *S3Backend) MakeBucket(param *MakeBucketInput) (*MakeBucketOutput, error
 		}
 
 		for i := 0; i < 10; i++ {
-			_, err = s.S3.PutBucketTagging(context.TODO(), &param)
+			ctx, cancel := context.WithTimeout(context.TODO(), s.flags.HTTPTimeout)
+			defer cancel()
+
+			_, err = s.S3.PutBucketTagging(ctx, &param)
 			err = mapAwsError(err)
 			switch err {
 			case nil:

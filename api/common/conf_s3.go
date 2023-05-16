@@ -47,7 +47,6 @@ func (c *S3Config) ToAwsConfig(ctx context.Context, flags *FlagStorage) (aws.Con
 	opts := []func(*config.LoadOptions) error{
 		config.WithHTTPClient(&http.Client{
 			Transport: GetHTTPTransport(),
-			Timeout:   flags.HTTPTimeout,
 		}),
 	}
 

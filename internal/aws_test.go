@@ -15,6 +15,8 @@
 package internal
 
 import (
+	"context"
+
 	. "github.com/kahing/goofys/api/common"
 	. "gopkg.in/check.v1"
 
@@ -32,27 +34,25 @@ var _ = Suite(&AwsTest{})
 
 func (s *AwsTest) SetUpSuite(t *C) {
 	var err error
-	s.s3, err = NewS3("", &FlagStorage{}, &S3Config{
-		Region: "us-east-1",
-	})
+	s.s3, err = NewS3(context.TODO(), "", &FlagStorage{HTTPTimeout: time.Second}, &S3Config{})
 	t.Assert(err, IsNil)
+	s.s3.awsConfig.Region = "us-west-2" // usually auto-detected by the client
+	s.s3.newS3()
 }
 
 func (s *AwsTest) TestRegionDetection(t *C) {
 	s.s3.bucket = "goofys-eu-west-1.kahing.xyz"
 
-	err, isAws := s.s3.detectBucketLocationByHEAD()
+	err := s.s3.Init("foo")
 	t.Assert(err, IsNil)
-	t.Assert(*s.s3.awsConfig.Region, Equals, "eu-west-1")
-	t.Assert(isAws, Equals, true)
+	t.Assert(s.s3.awsConfig.Region, Equals, "eu-west-1")
 }
 
 func (s *AwsTest) TestBucket404(t *C) {
 	s.s3.bucket = RandStringBytesMaskImprSrc(64)
 
-	err, isAws := s.s3.detectBucketLocationByHEAD()
+	err := s.s3.Init("foo")
 	t.Assert(err, Equals, syscall.ENXIO)
-	t.Assert(isAws, Equals, true)
 }
 
 type S3BucketEventualConsistency struct {

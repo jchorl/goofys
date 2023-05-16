@@ -82,6 +82,20 @@ $ sudo docker run -e BUCKET=$TESTBUCKET -e CACHE=false --rm --privileged --net=h
 
 See also: [cached benchmark result](https://github.com/kahing/goofys/blob/master/bench/cache/README.md) and [result on Azure](https://github.com/kahing/goofys/blob/master/bench/azure/README.md).
 
+# Running Tests
+
+```shell
+docker run -it --rm \
+    -v "$(pwd)":/work \
+    -w /work \
+    golang:1.20 \
+    bash
+
+apt-get update; apt-get install -y openjdk-17-jre
+
+./tests/run-tests.sh
+```
+
 # License
 
 Copyright (C) 2015 - 2019 Ka-Hing Cheung
