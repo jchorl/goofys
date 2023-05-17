@@ -391,15 +391,18 @@ func (fs *Goofys) Unmount(mountPoint string) {
 	fs.mu.RUnlock()
 
 	fuseLog.Infof("Attempting to unmount %v", mountPoint)
-	path := strings.Split(strings.Trim(mountPoint, "/"), "/")
-	for _, localName := range path {
-		dirInode := mp.findChild(localName)
-		if dirInode == nil || !dirInode.isDir() {
-			fuseLog.Errorf("Failed to find directory:%v while unmounting %v. "+
-				"Ignoring the unmount operation.", localName, mountPoint)
-			return
+	trimmed := strings.Trim(mountPoint, "/")
+	if trimmed != "" {
+		path := strings.Split(trimmed, "/")
+		for _, localName := range path {
+			dirInode := mp.findChild(localName)
+			if dirInode == nil || !dirInode.isDir() {
+				fuseLog.Errorf("Failed to find directory:%v while unmounting %v. "+
+					"Ignoring the unmount operation.", localName, mountPoint)
+				return
+			}
+			mp = dirInode
 		}
-		mp = dirInode
 	}
 	mp.ResetForUnmount()
 	return
