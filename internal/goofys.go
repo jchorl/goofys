@@ -391,12 +391,14 @@ func (fs *Goofys) Mount(mount *Mount) {
 }
 
 func (fs *Goofys) Unmount(mountPoint string) {
+	internalMountPoint := strings.TrimPrefix(mountPoint, fs.flags.MountPoint)
+
 	fs.mu.RLock()
 	mp := fs.getInodeOrDie(fuseops.RootInodeID)
 	fs.mu.RUnlock()
 
-	fuseLog.Infof("Attempting to unmount %v", mountPoint)
-	trimmed := strings.Trim(mountPoint, "/")
+	fuseLog.Infof("Attempting to unmount %s (relative path %s)", mountPoint, internalMountPoint)
+	trimmed := strings.Trim(internalMountPoint, "/")
 	if trimmed != "" {
 		path := strings.Split(trimmed, "/")
 		for _, localName := range path {
@@ -410,6 +412,7 @@ func (fs *Goofys) Unmount(mountPoint string) {
 		}
 	}
 	mp.ResetForUnmount()
+	fuse.Unmount(mountPoint)
 	return
 }
 
